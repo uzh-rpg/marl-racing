@@ -79,7 +79,7 @@ LP/LP-MLP training.
 If you use this code, please cite:
 
 ```bibtex
-@misc{geles2026superhumansafeagileracing,
+@misc{geles2026superhumanmultiagentracing,
   title={Superhuman Safe and Agile Racing through Multi-Agent Reinforcement Learning},
   author={Ismail Geles and Leonard Bauersfeld and Markus Wulfmeier and Davide Scaramuzza},
   year={2026},

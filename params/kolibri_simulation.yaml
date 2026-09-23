@@ -1,0 +1,29 @@
+quadrotor: "kolibri.yaml"
+
+delay: 0.02
+controller:
+  name: "Betaflight"
+  file: "kolibri_llc_betaflight.yaml"
+integrator:
+  name: "RK4"
+  step_size: 0.001
+
+imu:
+  enable: 0
+  file: "imu.yaml"
+
+model_pipeline:
+  - type: "ModelInit"
+    file: "model_init.yaml"
+  - type: "ModelMotor"
+    file: "kolibri_model_motor.yaml"
+  - type: "ModelBattery"
+    file: "kolibri_model_battery_4s.yaml"
+  - type: "ModelRotorSimple"
+    file: "model_rotor_simple.yaml"
+  - type: "ModelRotorSimpleAugmentation"
+    file: "kolibri_model_rotor_simple_augmentation.yaml"
+  - type: "ModelScale"
+  - type: "ModelExternalWrench"
+  - type: "ModelRigidBody"
+    file: "model_rigid_body.yaml"

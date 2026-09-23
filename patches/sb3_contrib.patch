@@ -1,0 +1,38 @@
+--- a/sb3_contrib/common/recurrent/policies.py
++++ b/sb3_contrib/common/recurrent/policies.py
+@@ -101,12 +101,14 @@
+             squash_output,
+             features_extractor_class,
+             features_extractor_kwargs,
+-            share_features_extractor,
+             normalize_images,
+             optimizer_class,
+             optimizer_kwargs,
+         )
+ 
++        if not share_features_extractor:
++            raise ValueError("The paper uses one shared feature extractor")
++        self.share_features_extractor = True
+         self.lstm_kwargs = lstm_kwargs or {}
+         self.shared_lstm = shared_lstm
+         self.enable_critic_lstm = enable_critic_lstm
+@@ -271,8 +273,7 @@
+             or not (we reset the lstm states in that case).
+         :return: the action distribution and new hidden states.
+         """
+-        # Call the method from the parent of the parent class
+-        features = super(ActorCriticPolicy, self).extract_features(obs, self.pi_features_extractor)
++        features = self.extract_features(obs)
+         latent_pi, lstm_states = self._process_sequence(features, lstm_states, episode_starts, self.lstm_actor)
+         latent_pi = self.mlp_extractor.forward_actor(latent_pi)
+         return self._get_action_dist_from_latent(latent_pi), lstm_states
+@@ -292,8 +293,7 @@
+             or not (we reset the lstm states in that case).
+         :return: the estimated values.
+         """
+-        # Call the method from the parent of the parent class
+-        features = super(ActorCriticPolicy, self).extract_features(obs, self.vf_features_extractor)
++        features = self.extract_features(obs)
+ 
+         if self.lstm_critic is not None:
+             latent_vf, lstm_states_vf = self._process_sequence(features, lstm_states, episode_starts, self.lstm_critic)

@@ -1,0 +1,157 @@
+main:
+  seed: 123
+  num_envs: 144
+  policy_net: MultiHead_attention_LSTM
+  num_threads: 12
+  n_stack: 1
+  test_env: false
+ppo:
+  log_std_init: -0.5
+  net_arch_pi:
+  - 512
+  - 512
+  net_arch_vf:
+  - 512
+  - 512
+  gae_lambda: 0.95
+  gamma: 0.985
+  n_steps: 250
+  ent_coef: 0.001
+  learning_rate:
+    start: 3e-4
+    end: 5e-5
+    end_fraction: 0.5
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  batch_size: 36000
+  n_epochs: 10
+  clip_range: 0.2
+  use_sde: false
+  sde_sample_freq: 1
+  activation: LeakyReLU
+environment:
+  sim_dt: 0.02
+  max_t: 30.0
+  init_state_buffer_size: 10
+  tracks: track.yaml
+  num_agents: 4
+  num_selfplay_agents: 3
+  opponents_pool:
+  - checkpoints/SA/training/1.pth
+  - checkpoints/SA/training/2.pth
+  - checkpoints/SA/training/3.pth
+  - checkpoints/SA/3.pth
+  - checkpoints/IPPO/training/1_a0.pth
+  - checkpoints/IPPO/A0.pth
+  - checkpoints/IPPO/training/2_a0.pth
+  - checkpoints/IPPO/training/3_a0.pth
+  - checkpoints/IPPO/training/1_a1.pth
+  - checkpoints/IPPO/A1.pth
+  - checkpoints/IPPO/training/2_a1.pth
+  - checkpoints/IPPO/training/3_a1.pth
+  - checkpoints/IPPO/training/1_a2.pth
+  - checkpoints/IPPO/A2.pth
+  - checkpoints/IPPO/training/2_a2.pth
+  - checkpoints/IPPO/training/3_a2.pth
+  - checkpoints/IPPO/training/1_a3.pth
+  - checkpoints/IPPO/A3.pth
+  - checkpoints/IPPO/training/2_a3.pth
+  - checkpoints/IPPO/training/3_a3.pth
+  opponents_pool_prob: 0.25
+  historic_sampling_heuristic: powerlaw
+  simulation_files:
+  - kolibri_simulation.yaml
+  - kolibri_simulation.yaml
+  - kolibri_simulation.yaml
+  - kolibri_simulation.yaml
+  derated_thrust_max:
+  - '3.5'
+  - '3.5'
+  - '3.5'
+  - '3.5'
+  agent_collision_radius: 0.15
+  agent_invisible_prob: 0.02
+  start_pos_prob: 0.75
+  action_normalization: old
+  air_disturbance_modeling: true
+rewards:
+  components:
+  - gate_prog_rew
+  - gate_view_rew
+  - gate_passing
+  - state_omega_norm
+  - cmd_omega_norm
+  - cmd_diff_omega_norm
+  - cmd_diff_thrust
+  - crashing
+  - ranking_lead
+  - opponent_collision
+  - total_rew
+  coeffs:
+    progress_coeff: 1.0
+    collision_coeff: 1.0
+    state_omega_penalty: -0.005
+    ranking_lead_coeff: 0.01
+    opponent_collision_coeff: 0.01
+curriculum:
+  relative_gate_size_points: 3
+  relative_gate_size:
+  - 2.0
+  - 1.0
+  - 0.8
+  relative_gate_size_counter:
+  - 0
+  - 100
+  - 200
+  start_pos_prob_points: 3
+  start_pos_prob_values:
+  - 0.05
+  - 0.5
+  - 0.95
+  start_pos_prob_counter:
+  - 0
+  - 100
+  - 200
+extra_infos:
+  components:
+  - flightmode
+  - laptime
+  - time
+  - traversal_err
+  - battery_voltage
+  - done
+  - ranking
+randomization:
+  dynamics_randomization_init: 1.0
+  random_mass: 0.05
+  random_inertia: 0.1
+  random_drag: 0.1
+  random_thrust_map: 0.1
+  random_torque: 0.01
+  random_delay: 0.04
+  rand_init_pos:
+  - 0.5
+  - 0.5
+  - 0.3
+  rand_init_vel:
+  - 0.5
+  - 0.5
+  - 0.5
+  rand_init_att:
+  - 20
+  - 20
+  - 20
+  rand_init_ome:
+  - 25
+  - 25
+  - 25
+  gate_position_randomization: 0.0
+perceiver:
+  num_queries: 4
+  num_heads: 4
+  dim_head: 32
+lstm_policy:
+  n_lstm_layers: 1
+  lstm_hidden_size: 256
+  enable_critic_lstm: true
+  shared_lstm: false

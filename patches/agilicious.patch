@@ -1,0 +1,2051 @@
+--- a/agilib/include/agilib/math/types.hpp
++++ b/agilib/include/agilib/math/types.hpp
+@@ -33,9 +33,15 @@
+ template<int rows = Dynamic>
+ using VectorInt = MatrixInt<rows, 1>;
+ 
++// Bool vector type.
++template<int rows = Dynamic>
++using BoolVector = Eigen::Matrix<bool, rows, 1>;
+ 
+ template<int rows = Dynamic>
+ using ArrayVector = Array<rows, 1>;
++
++template<int rows = Dynamic, int cols = Dynamic>
++using MatrixRowMajor = Eigen::Matrix<Scalar, rows, cols, Eigen::RowMajor>;
+ 
+ // Using `SparseMatrix` with type.
+ using SparseMatrix = Eigen::SparseMatrix<Scalar>;
+@@ -45,6 +51,9 @@
+ 
+ // Using `Quaternion` with type.
+ using Quaternion = Eigen::Quaternion<Scalar>;
++
++// Using 'AngleAxis' with type.
++using AngleAxis = Eigen::AngleAxis<Scalar>;
+ 
+ // Using `Ref` for modifier references.
+ template<class Derived>
+--- a/agilib/include/agilib/utils/yaml.hpp
++++ b/agilib/include/agilib/utils/yaml.hpp
+@@ -81,6 +81,8 @@
+     if constexpr (std::is_same_v<T, int>)
+       return as_int();
+     else if constexpr (std::is_same_v<T, unsigned int>)
++      return as_uint();
++    else if constexpr (std::is_same_v<T, unsigned long>)
+       return as_uint();
+     else if constexpr (std::is_same_v<T, float>)
+       return as_float();
+@@ -144,6 +146,8 @@
+       as_matrix(val);
+     else if constexpr (std::is_base_of_v<Eigen::QuaternionBase<T>, T>)
+       as_quaternion(val);
++    else if constexpr (std::is_base_of_v<std::vector<std::string>, T>)
++      as_vector(val);
+     else
+       val = as<T>();
+     return true;
+@@ -367,6 +371,25 @@
+         false_hit = 0;
+       }
+     }
++    static constexpr std::array<char, 3> syes{'y', 'e', 's'};
++    static constexpr std::array<char, 2> sno{'n', 'o'};
++
++    size_t yes_hit = 0;
++    size_t no_hit = 0;
++    for (const char c : raw_) {
++      if (c == syes[yes_hit] || (char)(c + case_dist) == syes[yes_hit]) {
++        ++yes_hit;
++        if (yes_hit >= syes.size()) return true;
++      } else {
++        yes_hit = 0;
++      }
++      if (c == sno[no_hit] || (char)(c + case_dist) == sno[no_hit]) {
++        ++no_hit;
++        if (no_hit >= sno.size()) return false;
++      } else {
++        no_hit = 0;
++      }
++    }
+     throw YamlException(getFullKeyName(), "Is not a valid bool: " + raw_);
+   }
+ 
+@@ -393,6 +416,22 @@
+         std::string("Can't parse to a complex number:\n") + e.what());
+     };
+     return std::complex<T>();
++  }
++
++  template<typename T>
++  void as_vector(std::vector<T>& vector) const {
++    if (isNull())
++      throw YamlException(getFullKeyName(),
++                          "Can't cast empty Yaml node to Vector object.");
++    const size_t n = seq_.size();
++    vector.resize(n);
++    try {
++      for (size_t i = 0; i < n; ++i) vector[i] = seq_[i].as<T>();
++    } catch (std::exception& e) {
++      throw YamlException(
++        getFullKeyName(),
++        std::string("Can't parse to std::vector object:\n") + e.what());
++    }
+   }
+ 
+   template<typename Derived,
+--- a/agilib/include/agilib/utils/logger.hpp
++++ b/agilib/include/agilib/utils/logger.hpp
+@@ -39,6 +39,8 @@
+ 
+   inline std::streamsize precision(const std::streamsize n);
+   inline void scientific(const bool on = true);
++  
++  void updateName(const std::string& name);
+ 
+   void info(const char* msg, ...) const;
+   void warn(const char* msg, ...) const;
+@@ -73,7 +75,7 @@
+       true;  // Only advertising
+   }
+ 
+-  inline void erasePublishingVariable(const std::string var_name) {
++  inline void erasePublishingVariable(const std::string& var_name) {
+     publishing_variables_.erase(name_ + var_name);
+   }
+ 
+@@ -105,7 +107,7 @@
+   static constexpr char FATAL[] = "Fatal:   ";
+   static constexpr char DEBUGPREFIX[] = "Debug:   ";
+ 
+-  const std::string name_;
++  std::string name_;
+   std::string formatted_name_;
+   const bool colored_;
+   static std::unordered_map<std::string, PublishLogContainer>
+--- a/agilib/src/utils/logger.cpp
++++ b/agilib/src/utils/logger.cpp
+@@ -18,7 +18,7 @@
+     formatted_name_ = formatted_name_ + " ";
+ }
+ 
+-Logger::~Logger() {}
++Logger::~Logger() = default;
+ 
+ 
+ inline std::streamsize Logger::precision(const std::streamsize n) {
+@@ -30,6 +30,17 @@
+     std::cout << std::scientific;
+   else
+     std::cout << std::fixed;
++}
++
++void Logger::updateName(const std::string& name) {
++  name_ = "Logger/" + name + "/";
++  // Format name
++  formatted_name_ = "[" + name + "]";
++  if (formatted_name_.size() < NAME_PADDING)
++    formatted_name_ =
++      formatted_name_ + std::string(NAME_PADDING - formatted_name_.size(), ' ');
++  else
++    formatted_name_ = formatted_name_ + " ";
+ }
+ 
+ void Logger::info(const char* msg, ...) const {
+--- a/agilib/include/agilib/types/quad_state.hpp
++++ b/agilib/include/agilib/types/quad_state.hpp
+@@ -73,24 +73,33 @@
+     MOTDES3 = 37,
+     MOTDES4 = 38,
+     NMOTDES = 4,
+-    SIZE = 39,
++    E = 39,
++    UCAP = 40,
++    UBAT = 41,
++    BFLI = 42,
++    BFLIR = 42,
++    BFLIP = 43, 
++    BFLIY = 44,
++    NBLFI = 3,
++    SIZE = 45,
+     DYN = 19
+   };
+ 
+-  QuadState();
++  QuadState() = default;
+   QuadState(const Scalar t, const Vector<IDX::SIZE>& x);
+   QuadState(const Scalar t, const Vector<3>& position, const Scalar yaw);
+   QuadState(const QuadState& state);
+-  ~QuadState();
++  ~QuadState() = default;
+ 
+   inline static int size() { return SIZE; }
+ 
+   Quaternion q() const;
+-  void q(const Quaternion quaternion);
++  void q(const Quaternion& quaternion);
+   void q(const Scalar angle, const Vector<3>& axis = Vector<3>::UnitZ());
+   Matrix<3, 3> R() const;
+ 
+   void setZero(const bool& reset_time = true);
++  void resetBattery();
+   void linearize();
+   inline bool valid() const { return x.allFinite() && std::isfinite(t); }
+ 
+@@ -109,6 +118,9 @@
+   Ref<Vector<3>> ba{x.segment<IDX::NBACC>(IDX::BACC)};
+   Ref<Vector<4>> mot{x.segment<IDX::NMOT>(IDX::MOT)};
+   Ref<Vector<4>> motdes{x.segment<IDX::NMOTDES>(IDX::MOTDES)};
++  Ref<Vector<1>> e{x.segment<1>(E)};
++  Ref<Vector<1>> ucap{x.segment<1>(UCAP)};
++  Ref<Vector<1>> ubat{x.segment<1>(UBAT)};
+ 
+   Scalar getYaw(const Scalar yaw = NAN) const;
+   void applyYaw(const Scalar angle);
+--- a/agilib/src/types/quad_state.cpp
++++ b/agilib/src/types/quad_state.cpp
+@@ -1,8 +1,6 @@
+ #include "agilib/types/quad_state.hpp"
+ 
+ namespace agi {
+-
+-QuadState::QuadState() {}
+ 
+ QuadState::QuadState(const Scalar t, const Vector<IDX::SIZE>& x) : x(x), t(t) {}
+ 
+@@ -15,13 +13,11 @@
+ 
+ QuadState::QuadState(const QuadState& state) : x(state.x), t(state.t) {}
+ 
+-QuadState::~QuadState() {}
+-
+ Quaternion QuadState::q() const {
+-  return Quaternion(x(ATTW), x(ATTX), x(ATTY), x(ATTZ));
++  return Quaternion{x(ATTW), x(ATTX), x(ATTY), x(ATTZ)};
+ }
+ 
+-void QuadState::q(const Quaternion quaternion) {
++void QuadState::q(const Quaternion& quaternion) {
+   x(IDX::ATTW) = quaternion.w();
+   x(IDX::ATTX) = quaternion.x();
+   x(IDX::ATTY) = quaternion.y();
+@@ -47,6 +43,13 @@
+   }
+   x.setZero();
+   x(ATTW) = 1.0;
++  x(UBAT) = 16.4;
++}
++
++void QuadState::resetBattery() {
++  x(UBAT) = 16.4;
++  x(E) = 0.0;
++  x(UCAP) = 0.0;
+ }
+ 
+ void QuadState::linearize() { qx.normalize(); }
+@@ -64,8 +67,7 @@
+ }
+ 
+ void QuadState::applyYaw(const Scalar angle) {
+-  const Scalar yaw = getYaw();
+-  const Scalar new_yaw = std::isfinite(yaw) ? yaw : 0.0;
++  const Scalar new_yaw = std::isfinite(angle) ? angle : 0.0;
+   q(q() * Eigen::AngleAxis(new_yaw, Vector<3>::UnitZ()));
+   if (qx(0) < 0.0) qx = -qx;
+ }
+@@ -103,7 +105,10 @@
+      << "bw= [" << state.bw.transpose() << "]\n"
+      << "ba= [" << state.ba.transpose() << "]\n"
+      << "mot=[" << state.mot.transpose() << "]\n"
+-     << "dmt=[" << state.motdes.transpose() << "]" << std::endl;
++     << "dmt=[" << state.motdes.transpose() << "]\n"
++     << "e=   " << state.e << "\n"
++     << "ucap=" << state.ucap << "\n"
++     << "ubat=" << state.ubat << std::endl;
+   os.precision();
+   os.unsetf(std::ios::scientific);
+   return os;
+--- a/agilib/include/agilib/types/quadrotor.hpp
++++ b/agilib/include/agilib/types/quadrotor.hpp
+@@ -71,6 +71,11 @@
+   Scalar thrust_min_;
+   Scalar thrust_max_;
+   RotorConfig rotors_config_;
++  
++  // Scaling factors for RL training
++  Scalar scale_thrust_ = 1.0;
++  Scalar scale_drag_ = 1.0;
++  Scalar scale_torque_ = 1.0;
+ 
+   // Quadrotor limits
+   Vector<3> omega_max_;
+--- a/agilib/src/types/quadrotor.cpp
++++ b/agilib/src/types/quadrotor.cpp
+@@ -180,6 +180,11 @@
+   node["aero_coeff_3"].getIfDefined(aero_coeff_3_);
+   node["aero_coeff_h"].getIfDefined(aero_coeff_h_);
+ 
++  // Scales
++  node["scale_thrust"].getIfDefined(scale_thrust_);
++  node["scale_drag"].getIfDefined(scale_drag_);
++  node["scale_torque"].getIfDefined(scale_torque_);
++
+   return valid();
+ }
+ 
+@@ -208,6 +213,10 @@
+   check &= (aero_coeff_1_.array() >= 0.0).all();
+   check &= (aero_coeff_3_.array() >= 0.0).all();
+   check &= aero_coeff_h_ >= 0.0;
++
++  check &= scale_thrust_ >= 0.0;
++  check &= scale_drag_ >= 0.0;
++  check &= scale_torque_ >= 0.0;
+ 
+   return check;
+ }
+--- a/agilib/include/agilib/simulator/simulator_params.hpp
++++ b/agilib/include/agilib/simulator/simulator_params.hpp
+@@ -3,9 +3,26 @@
+ #include "agilib/base/module.hpp"
+ #include "agilib/base/parameter_base.hpp"
+ #include "agilib/math/integrator_base.hpp"
++#include "agilib/math/integrator_euler.hpp"
++#include "agilib/math/integrator_rk4.hpp"
++#include "agilib/math/integrator_symplectic_euler.hpp"
+ #include "agilib/simulator/low_level_controller_base.hpp"
++#include "agilib/simulator/low_level_controller_betaflight.hpp"
++#include "agilib/simulator/low_level_controller_simple.hpp"
+ #include "agilib/simulator/model_base.hpp"
++#include "agilib/simulator/model_battery.hpp"
++#include "agilib/simulator/model_body_drag.hpp"
++#include "agilib/simulator/model_init.hpp"
++#include "agilib/simulator/model_lin_cub_drag.hpp"
++#include "agilib/simulator/model_motor.hpp"
++#include "agilib/simulator/model_propeller_bem.hpp"
++#include "agilib/simulator/model_rigid_body.hpp"
++#include "agilib/simulator/model_rotor_simple_augmentation.hpp"
++#include "agilib/simulator/model_thrust_torque_simple.hpp"
++#include "agilib/simulator/model_scale.hpp"
++#include "agilib/simulator/model_external_wrench.hpp"
+ #include "agilib/types/quadrotor.hpp"
++#include "agilib/utils/file_utils.hpp"
+ #include "agilib/utils/module_config.hpp"
+ 
+ namespace agi {
+@@ -13,8 +30,7 @@
+  public:
+   SimulatorParams(const Quadrotor& quadrotor = Quadrotor());
+   SimulatorParams(const fs::path& filename,
+-                  const fs::path& agi_param_directory = "",
+-                  const fs::path& ros_param_directory = "");
++                  const fs::path& agi_param_directory = "");
+ 
+   using ParameterBase::load;
+   bool load(const Yaml& node) override;
+@@ -38,11 +54,20 @@
+   Scalar sim_dt_;
+   Scalar delay_;
+ 
++  fs::path imu_file_;
++  bool enable_imu_;
++
+   fs::path quad_file_;
+   Quadrotor quadrotor_;
++
++  mutable std::vector<std::shared_ptr<ModelBase>> models_with_windspeed_;
++  
++  mutable std::shared_ptr<ModelExternalWrench> external_wrench_ptr_{nullptr};
+ 
+  private:
+   Logger logger_{"SimulatorParams"};
+   std::vector<ModuleConfig> model_configs_;
++  
++
+ };
+ }  // namespace agi
+--- a/agilib/src/simulator/simulator_params.cpp
++++ b/agilib/src/simulator/simulator_params.cpp
+@@ -1,22 +1,6 @@
+ #include "agilib/simulator/simulator_params.hpp"
+ 
+ #include <unistd.h>
+-
+-#include "agilib/math/integrator_euler.hpp"
+-#include "agilib/math/integrator_rk4.hpp"
+-#include "agilib/math/integrator_symplectic_euler.hpp"
+-#include "agilib/simulator/low_level_controller_betaflight.hpp"
+-#include "agilib/simulator/low_level_controller_simple.hpp"
+-#include "agilib/simulator/model_body_drag.hpp"
+-#include "agilib/simulator/model_init.hpp"
+-#include "agilib/simulator/model_lin_cub_drag.hpp"
+-#include "agilib/simulator/model_motor.hpp"
+-#include "agilib/simulator/model_propeller_bem.hpp"
+-#include "agilib/simulator/model_rigid_body.hpp"
+-#include "agilib/simulator/model_thrust_torque_simple.hpp"
+-#include "agilib/types/quadrotor.hpp"
+-#include "agilib/utils/file_utils.hpp"
+-#include "agilib/utils/module_config.hpp"
+ 
+ namespace agi {
+ 
+@@ -26,11 +10,9 @@
+ }
+ 
+ SimulatorParams::SimulatorParams(const fs::path& filename,
+-                                 const fs::path& agi_param_directory,
+-                                 const fs::path& ros_param_directory)
++                                 const fs::path& agi_param_directory)
+   : agi_param_directory_(agi_param_directory),
+-    ros_param_directory_(ros_param_directory),
+-    quad_file_(fs::path(ros_param_directory) / "quads" / "") {
++    quad_file_(fs::path(agi_param_directory) / "quads" / "") {
+   fs::path full_filename = filename;
+   if (!checkFile(agi_param_directory_, &full_filename))
+     throw ParameterException("Simulation config file not found!\n" +
+@@ -39,6 +21,7 @@
+   if (!ParameterBase::load(full_filename))
+     throw ParameterException(full_filename);
+ }
++
+ bool SimulatorParams::load(const Yaml& yaml) {
+   if (agi_param_directory_.empty()) {
+     static constexpr int PATH_LEN = 2048;
+@@ -74,6 +57,11 @@
+   controller_file_ = yaml["controller"]["file"].as<std::string>();
+   integrator_name_ = yaml["integrator"]["name"].as<std::string>();
+   sim_dt_ = yaml["integrator"]["step_size"].as<Scalar>();
++
++  enable_imu_ = yaml["imu"]["enable"].as<bool>();
++  if (enable_imu_)
++    imu_file_ = (std::string)agi_param_directory_ + "/" +
++                yaml["imu"]["file"].as<std::string>();
+ 
+   const int num_models = yaml["model_pipeline"].size();
+   model_configs_.clear();
+@@ -114,7 +102,7 @@
+     return true;
+   }
+ 
+-  for (auto model_config : model_configs_) {
++  for (auto& model_config : model_configs_) {
+     logger_.info("Loading dynamics model [%s] from [%s].",
+                  model_config.type.c_str(), model_config.file.string().c_str());
+ 
+@@ -122,11 +110,20 @@
+       model_pipeline.emplace_back(
+         std::make_shared<ModelInit>(ModelInit{quadrotor_}));
+     } else if (model_config.type == "ModelMotor") {
+-      model_pipeline.emplace_back(
+-        std::make_shared<ModelMotor>(ModelMotor{quadrotor_}));
++      MotorParameters motor_params;
++      motor_params.load(agi_param_directory_ / "dynamics_models" /
++                        model_config.file);
++      model_pipeline.emplace_back(
++        std::make_shared<ModelMotor>(ModelMotor{quadrotor_, motor_params}));
+     } else if (model_config.type == "ModelRotorSimple") {
+       model_pipeline.emplace_back(std::make_shared<ModelThrustTorqueSimple>(
+         ModelThrustTorqueSimple{quadrotor_}));
++    } else if (model_config.type == "ModelBattery") {
++      BatteryParameters bat_params;
++      bat_params.load(agi_param_directory_ / "dynamics_models" /
++                      model_config.file);
++      model_pipeline.emplace_back(
++        std::make_shared<ModelBattery>(ModelBattery{quadrotor_, bat_params}));
+     } else if (model_config.type == "ModelRotorBEM") {
+       BEMParameters bem_params;
+       bem_params.load(agi_param_directory_ / "dynamics_models" /
+@@ -137,17 +134,37 @@
+       BodyDragParameters body_drag_params;
+       body_drag_params.load(agi_param_directory_ / "dynamics_models" /
+                             model_config.file);
+-      model_pipeline.emplace_back(std::make_shared<ModelBodyDrag>(
+-        ModelBodyDrag{quadrotor_, body_drag_params}));
++      models_with_windspeed_.push_back(static_cast<std::shared_ptr<ModelBase>>(
++        model_pipeline.emplace_back(std::make_shared<ModelBodyDrag>(
++          ModelBodyDrag{quadrotor_, body_drag_params}))));
+     } else if (model_config.type == "ModelLinCubDragIndLift") {
+       LinCubDragParameters lin_cub_drag_params;
+       lin_cub_drag_params.load(agi_param_directory_ / "dynamics_models" /
+                                model_config.file);
+-      model_pipeline.emplace_back(std::make_shared<ModelLinCubDrag>(
+-        ModelLinCubDrag{quadrotor_, lin_cub_drag_params}));
++      models_with_windspeed_.push_back(static_cast<std::shared_ptr<ModelBase>>(
++        model_pipeline.emplace_back(std::make_shared<ModelLinCubDrag>(
++          ModelLinCubDrag{quadrotor_, lin_cub_drag_params}))));
++    } else if (model_config.type == "ModelRotorSimpleAugmentation") {
++      RotorSimpleAugmentationParameters augmentation_params;
++      augmentation_params.load(agi_param_directory_ / "dynamics_models" /
++                               model_config.file);
++      models_with_windspeed_.push_back(
++        static_cast<std::shared_ptr<ModelBase>>(model_pipeline.emplace_back(
++          std::make_shared<ModelRotorSimpleAugmentation>(
++            ModelRotorSimpleAugmentation{quadrotor_, augmentation_params}))));
++    } else if (model_config.type == "ModelScale") {
++      model_pipeline.emplace_back(
++        std::make_shared<ModelScale>(ModelScale{quadrotor_}));
++    } else if (model_config.type == "ModelExternalWrench") {
++      external_wrench_ptr_ =
++        std::make_shared<ModelExternalWrench>(ModelExternalWrench{quadrotor_});
++      model_pipeline.emplace_back(external_wrench_ptr_);
+     } else if (model_config.type == "ModelRigidBody") {
+       model_pipeline.emplace_back(
+         std::make_shared<ModelRigidBody>(ModelRigidBody{quadrotor_}));
++    } else {
++      logger_.error("Unknown model [%s] specified, skipping!",
++                    model_config.type.c_str());
+     }
+   }
+ 
+@@ -210,20 +227,13 @@
+     if (integrator_name_ == "Euler") {
+       integrator =
+         std::make_shared<IntegratorEuler>(dynamics_function, sim_dt_);
+-      logger_.info("Enabled Euler integrator with a step size of %.4f seconds.",
+-                   sim_dt_);
+       return true;
+     } else if (integrator_name_ == "RK4") {
+       integrator = std::make_shared<IntegratorRK4>(dynamics_function, sim_dt_);
+-      logger_.info("Enabled RK4 integrator with a step size of %.4f seconds.",
+-                   sim_dt_);
+       return true;
+     } else if (integrator_name_ == "SymplecticEuler") {
+       integrator =
+         std::make_shared<IntegratorSymplecticEuler>(dynamics_function, sim_dt_);
+-      logger_.info(
+-        "Enabled SymplecticEuler integrator with a step size of %.4f seconds.",
+-        sim_dt_);
+       return true;
+     } else {
+       logger_.error("Unknown integrator specified: [%s]",
+--- /dev/null
++++ b/agilib/include/agilib/simulator/model_external_wrench.hpp
+@@ -0,0 +1,29 @@
++#pragma once
++
++#include "agilib/simulator/model_base.hpp"
++
++namespace agi {
++
++class ModelExternalWrench : public ModelBase {
++ public:
++  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
++
++  ModelExternalWrench(Quadrotor quad) : ModelBase(quad) {}
++  bool run(const Ref<const Vector<QS::SIZE>>,
++           Ref<Vector<QS::SIZE>>) const override;
++
++  bool setExternalWrench(const Ref<const Vector<6>>& wrench,
++                         bool force_in_bf = false, bool torque_in_bf = true);
++  bool setExternalForce(const Ref<const Vector<3>>& force,
++                        bool force_in_bf = false);
++  bool setExternalTorque(const Ref<const Vector<3>>& torque,
++                         bool torque_in_bf = true);
++
++ private:
++  bool force_in_bf_ = true;
++  bool torque_in_bf_ = true;
++  Vector<6> wrench_ = Vector<6>::Zero();
++};
++
++
++}  // namespace agi
+--- /dev/null
++++ b/agilib/src/simulator/model_external_wrench.cpp
+@@ -0,0 +1,69 @@
++#include "agilib/simulator/model_external_wrench.hpp"
++
++
++namespace agi {
++
++bool ModelExternalWrench::run(const Ref<const Vector<QS::SIZE>> state,
++                              Ref<Vector<QS::SIZE>> derivative) const {
++  if (!state.segment<QS::DYN>(0).allFinite()) return false;
++
++  // Tiny optimization: only calculate R if needed
++  if (!force_in_bf_ && torque_in_bf_) {
++    derivative.segment<QS::NVEL>(QS::VEL) += wrench_.head<3>() / quad_.m_;
++    derivative.segment<QS::NOME>(QS::OME) += quad_.J_inv_ * wrench_.tail<3>();
++    return true;
++  }
++
++  const Matrix<3, 3> R = Quaternion(state(QS::ATTW), state(QS::ATTX),
++                                    state(QS::ATTY), state(QS::ATTZ))
++                           .toRotationMatrix();
++  if (force_in_bf_)
++    derivative.segment<QS::NVEL>(QS::VEL) += R * wrench_.head<3>() / quad_.m_;
++  else
++    derivative.segment<QS::NVEL>(QS::VEL) += wrench_.head<3>() / quad_.m_;
++
++  if (torque_in_bf_)
++    derivative.segment<QS::NOME>(QS::OME) += quad_.J_inv_ * wrench_.tail<3>();
++  else
++    derivative.segment<QS::NOME>(QS::OME) +=
++      R.transpose() * quad_.J_inv_ * wrench_.tail<3>();
++
++  return true;
++}
++
++bool ModelExternalWrench::setExternalWrench(const Ref<const Vector<6>>& wrench,
++                                            bool force_in_bf,
++                                            bool torque_in_bf) {
++  if (wrench.allFinite()) {
++    wrench_ = wrench;
++    force_in_bf_ = force_in_bf;
++    torque_in_bf_ = torque_in_bf;
++    return true;
++  } else {
++    return false;
++  }
++}
++
++bool ModelExternalWrench::setExternalForce(const Ref<const Vector<3>>& force,
++                                           bool force_in_bf) {
++  if (force.allFinite()) {
++    wrench_.head<3>() = force;
++    force_in_bf_ = force_in_bf;
++    return true;
++  } else {
++    return false;
++  }
++}
++
++bool ModelExternalWrench::setExternalTorque(const Ref<const Vector<3>>& torque,
++                                            bool torque_in_bf) {
++  if (torque.allFinite()) {
++    wrench_.tail<3>() = torque;
++    torque_in_bf_ = torque_in_bf;
++    return true;
++  } else {
++    return false;
++  }
++}
++
++}  // namespace agi
+--- a/agilib/include/agilib/simulator/model_base.hpp
++++ b/agilib/include/agilib/simulator/model_base.hpp
+@@ -24,8 +24,11 @@
+   virtual bool run(const Ref<const Vector<QS::SIZE>>,
+                    Ref<Vector<QS::SIZE>>) const = 0;
+ 
++  virtual bool setWindspeed(const Vector<3>& windspeed);
++
+  protected:
+   Quadrotor quad_;
++  Vector<3> windspeed_ = Vector<3>::Zero();  // default windspeed
+ };
+ 
+ }  // namespace agi
+--- a/agilib/src/simulator/model_base.cpp
++++ b/agilib/src/simulator/model_base.cpp
+@@ -10,4 +10,12 @@
+   return true;
+ }
+ 
++bool ModelBase::setWindspeed(const Vector<3>& windspeed) {
++  if (windspeed.allFinite()) {
++    windspeed_ = windspeed;
++    return true;
++  }
++  return false;
++}
++
+ }  // namespace agi
+--- /dev/null
++++ b/agilib/include/agilib/simulator/model_scale.hpp
+@@ -0,0 +1,19 @@
++#pragma once
++
++#include "agilib/math/math.hpp"
++#include "agilib/math/gravity.hpp"
++#include "agilib/simulator/model_base.hpp"
++
++namespace agi {
++
++class ModelScale : public ModelBase {
++ public:
++  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
++
++  ModelScale(Quadrotor quad) : ModelBase(quad) {}
++  bool run(const Ref<const Vector<QS::SIZE>>,
++           Ref<Vector<QS::SIZE>>) const override;
++};
++
++
++}  // namespace agi
+--- /dev/null
++++ b/agilib/src/simulator/model_scale.cpp
+@@ -0,0 +1,28 @@
++#include "agilib/simulator/model_scale.hpp"
++
++#include "agilib/math/gravity.hpp"
++
++
++namespace agi {
++
++
++bool ModelScale::run(const Ref<const Vector<QS::SIZE>> state,
++                     Ref<Vector<QS::SIZE>> derivative) const {
++  if (!state.segment<QS::DYN>(0).allFinite()) return false;
++
++  const Matrix<3, 3> R = Quaternion(state(QS::ATTW), state(QS::ATTX),
++                                    state(QS::ATTY), state(QS::ATTZ))
++                           .toRotationMatrix();
++
++  Vector<3> force =
++    R.transpose() * (derivative.segment<QS::NVEL>(QS::VEL) - GVEC) * quad_.m_;
++  force.segment<2>(0) *= quad_.scale_drag_;
++  force(2) *= quad_.scale_thrust_;
++  derivative.segment<QS::NVEL>(QS::VEL) = R * force / quad_.m_ + GVEC;
++  derivative.segment<QS::NOME>(QS::OME) *= quad_.scale_torque_;
++
++  return true;
++}
++
++
++}  // namespace agi
+--- /dev/null
++++ b/agilib/include/agilib/simulator/model_rotor_simple_augmentation.hpp
+@@ -0,0 +1,26 @@
++#pragma once
++
++#include "agilib/math/math.hpp"
++#include "agilib/simulator/model_base.hpp"
++#include "agilib/simulator/model_rotor_simple_augmentation_params.hpp"
++
++namespace agi {
++
++class ModelRotorSimpleAugmentation : public ModelBase {
++ public:
++  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
++
++  ModelRotorSimpleAugmentation(Quadrotor quad,
++                               const RotorSimpleAugmentationParameters& params =
++                                 RotorSimpleAugmentationParameters());
++
++  bool run(const Ref<const Vector<QS::SIZE>>,
++           Ref<Vector<QS::SIZE>>) const override;
++
++ private:
++  RotorSimpleAugmentationParameters
++    params_;  // Dummy to do it better in the future
++};
++
++
++}  // namespace agi
+--- /dev/null
++++ b/agilib/src/simulator/model_rotor_simple_augmentation.cpp
+@@ -0,0 +1,59 @@
++#include "agilib/simulator/model_rotor_simple_augmentation.hpp"
++
++namespace agi {
++
++ModelRotorSimpleAugmentation::ModelRotorSimpleAugmentation(
++  Quadrotor quad, const RotorSimpleAugmentationParameters& params)
++  : ModelBase(quad), params_(params) {}
++
++bool ModelRotorSimpleAugmentation::run(const Ref<const Vector<QS::SIZE>> state,
++                                       Ref<Vector<QS::SIZE>> derivative) const {
++  const Matrix<3, 3> R = Quaternion(state(QS::ATTW), state(QS::ATTX),
++                                    state(QS::ATTY), state(QS::ATTZ))
++                           .toRotationMatrix();
++
++  const Vector<3> velocity_body =
++    R.transpose() * (state.segment<QS::NVEL>(QS::VEL) - windspeed_);
++  const Scalar vx = velocity_body(0);
++  const Scalar vy = velocity_body(1);
++  const Scalar vz = velocity_body(2);
++  const Scalar vhor = std::sqrt(vx * vx + vy * vy);
++  const Scalar m_mean =
++    state.segment<QS::NMOT>(QS::MOT).array().square().mean();
++  static const Scalar ang_x = 0;
++  static const Scalar ang_y = 0;
++
++  const Vector<6> poly_fx{
++    vx, m_mean, ang_y, vx * m_mean, vx * std::abs(vx), vx * vx * vx};
++  const Vector<6> poly_fy{
++    vy, m_mean, ang_x, vy * m_mean, vy * std::abs(vy), vy * vy * vy};
++  const Vector<10> poly_fz{1,           vhor,        vz,
++                           m_mean,      vhor * vz,   vhor * m_mean,
++                           vz * m_mean, vhor * vhor, vhor * vz * m_mean,
++                           vz * vz * vz};
++  const Vector<3> poly_tx{vy, m_mean, vy * m_mean};
++  const Vector<3> poly_ty{vx, m_mean, vx * m_mean};
++  const Vector<2> poly_tz{vx, vy};
++
++  const Scalar delta_fx = poly_fx.dot(params_.fx_);
++  const Scalar delta_fy = poly_fy.dot(params_.fy_);
++  const Scalar delta_fz = poly_fz.dot(params_.fz_);
++  const Scalar delta_tx = poly_tx.dot(params_.tx_);
++  const Scalar delta_ty = poly_ty.dot(params_.ty_);
++  const Scalar delta_tz = poly_tz.dot(params_.tz_);
++
++
++  const Vector<3> residual_acceleration =
++    params_.scale_force_ * Vector<3>(delta_fx, delta_fy, delta_fz);
++  const Vector<3> residual_angular_acc =
++    params_.scale_torque_ * Vector<3>(delta_tx, delta_ty, delta_tz);
++
++  // Set up the derivative
++  derivative.segment<QS::NVEL>(QS::VEL) += R * residual_acceleration;
++  derivative.segment<QS::NOME>(QS::OME) += residual_angular_acc;
++
++  return true;
++}
++
++
++}  // namespace agi
+--- /dev/null
++++ b/agilib/include/agilib/simulator/model_rotor_simple_augmentation_params.hpp
+@@ -0,0 +1,30 @@
++#pragma once
++
++#include "agilib/base/parameter_base.hpp"
++#include "agilib/math/types.hpp"
++#include "agilib/utils/logger.hpp"
++
++namespace agi {
++
++struct RotorSimpleAugmentationParameters : public ParameterBase {
++  RotorSimpleAugmentationParameters();
++
++  using ParameterBase::load;
++  bool load(const Yaml& node) override;
++
++  bool valid() const override;
++  friend std::ostream& operator<<(std::ostream& os,
++                                  const RotorSimpleAugmentationParameters& p);
++
++
++  Scalar scale_force_ = NAN;
++  Scalar scale_torque_ = NAN;
++  Vector<6> fx_;
++  Vector<6> fy_;
++  Vector<10> fz_;
++  Vector<3> tx_;
++  Vector<3> ty_;
++  Vector<2> tz_;
++};
++
++}  // namespace agi
+--- /dev/null
++++ b/agilib/src/simulator/model_rotor_simple_augmentation_params.cpp
+@@ -0,0 +1,73 @@
++#include "agilib/simulator/model_rotor_simple_augmentation_params.hpp"
++
++namespace agi {
++
++RotorSimpleAugmentationParameters::RotorSimpleAugmentationParameters()
++  : scale_force_(1.0), scale_torque_(1.0) {
++    fx_.setZero();
++    fy_.setZero();
++    fz_.setZero();
++    tx_.setZero();
++    ty_.setZero();
++    tz_.setZero();
++  }
++
++
++bool RotorSimpleAugmentationParameters::load(const Yaml& node) {
++  if (node.isNull()) return false;
++
++  scale_force_ = node["scale_force"].as<Scalar>();
++  scale_torque_ = node["scale_torque"].as<Scalar>();
++  node["fx"]["vx"].getIfDefined(fx_(0));
++  node["fx"]["m_mean"].getIfDefined(fx_(1));
++  node["fx"]["ang_y"].getIfDefined(fx_(2));
++  node["fx"]["vx*m_mean"].getIfDefined(fx_(3));
++  node["fx"]["vx_sqr"].getIfDefined(fx_(4));
++  node["fx"]["vx_cub"].getIfDefined(fx_(5));
++  node["fy"]["vy"].getIfDefined(fy_(0));
++  node["fy"]["m_mean"].getIfDefined(fy_(1));
++  node["fy"]["ang_x"].getIfDefined(fy_(2));
++  node["fy"]["vy*m_mean"].getIfDefined(fy_(3));
++  node["fy"]["vy_sqr"].getIfDefined(fy_(4));
++  node["fy"]["vy_cub"].getIfDefined(fy_(5));
++  node["fz"]["offset"].getIfDefined(fz_(0));
++  node["fz"]["vhor"].getIfDefined(fz_(1));
++  node["fz"]["vz"].getIfDefined(fz_(2));
++  node["fz"]["m_mean"].getIfDefined(fz_(3));
++  node["fz"]["vhor*vz"].getIfDefined(fz_(4));
++  node["fz"]["vhor*m_mean"].getIfDefined(fz_(5));
++  node["fz"]["vz*m_mean"].getIfDefined(fz_(6));
++  node["fz"]["vhor_sqr"].getIfDefined(fz_(7));
++  node["fz"]["vhor*vz*m_mean"].getIfDefined(fz_(8));
++  node["fz"]["vz_cub"].getIfDefined(fz_(9));
++  node["tx"]["vy"].getIfDefined(tx_(0));
++  node["tx"]["m_mean"].getIfDefined(tx_(1));
++  node["tx"]["vy*m_mean"].getIfDefined(tx_(2));
++  node["ty"]["vx"].getIfDefined(ty_(0));
++  node["ty"]["m_mean"].getIfDefined(ty_(1));
++  node["ty"]["vx*m_mean"].getIfDefined(ty_(2));
++  node["tz"]["vx"].getIfDefined(tz_(0));
++  node["tz"]["vy"].getIfDefined(tz_(1));
++  return valid();
++}
++
++bool RotorSimpleAugmentationParameters::valid() const {
++  bool check = true;
++  check &= (scale_force_ >= 0.0);
++  check &= (scale_torque_ >= 0.0);
++  return check;
++}
++
++std::ostream& operator<<(std::ostream& os,
++                         const RotorSimpleAugmentationParameters& p) {
++  os.precision(3);
++  os << std::scientific;
++  os << "RotorSimpleAugmentationParameters:\n"
++     << "Scale Force:           " << p.scale_force_ << "\n"
++     << "Scale Torque:          " << p.scale_torque_ << std::endl;
++  os.precision();
++  os.unsetf(std::ios::scientific);
++  return os;
++}
++
++}  // namespace agi
+--- a/agilib/include/agilib/simulator/model_propeller_bem.hpp
++++ b/agilib/include/agilib/simulator/model_propeller_bem.hpp
+@@ -37,6 +37,12 @@
+   bool run(const Ref<const Vector<QS::SIZE>>,
+            Ref<Vector<QS::SIZE>>) const override;
+ 
++  bool setWindspeed(const Vector<3>& windspeed) override {
++    throw std::runtime_error(
++      "ModelPropellerBEM does not support windspeed setting.");
++    return false;
++  }
++
+  private:
+   // due to frame obscurring parts of the area below
+   const Scalar thrust_scale_ = 0.9575;
+--- a/agilib/include/agilib/utils/timer.hpp
++++ b/agilib/include/agilib/utils/timer.hpp
+@@ -1,12 +1,16 @@
+ #pragma once
+ 
+ #include <chrono>
+-#include <iostream>
+-#include <string>
++#include <memory>
++#include <regex>
++#include <sstream>
+ 
++#include "agilib/utils/logger.hpp"
++#include "agilib/utils/statistic.hpp"
+ #include "agilib/math/types.hpp"
+ 
+ namespace agi {
++
+ 
+ /*
+  * Timer class to perform runtime analytics.
+@@ -27,7 +31,6 @@
+  * or `print()` which always prints to console.
+  *
+  */
+-
+ using TimeFunction = std::function<Scalar()>;
+ static constexpr auto ChronoTime = []() -> agi::Scalar {
+   const std::chrono::high_resolution_clock::time_point now =
+@@ -37,93 +40,136 @@
+                   .count();
+ };
+ 
+-class Timer {
++class Timer : public Statistic {
+  public:
+-  Timer(const std::string name = "", const std::string module = "");
+-  Timer(const Timer& other);
+-  ~Timer() {}
++  Timer(const std::string &name = "") : Statistic("Timer " + name) {}
++  Timer(const Timer &other) = default;
+ 
+   /// Start the timer.
+-  void tic();
++  void tic() { t_start_ = std::chrono::high_resolution_clock::now(); }
+ 
+   /// Stops timer, calculates timing, also tics again.
+-  Scalar toc();
++  Scalar toc() {
++    // Calculate timing.
++    const TimePoint t_end = std::chrono::high_resolution_clock::now();
++    const Scalar dt =
++      1e-9 * (Scalar)std::chrono::duration_cast<std::chrono::nanoseconds>(
++               t_end - t_start_)
++               .count();
++
++    t_start_ = t_end;
++    return this->add(dt);
++  }
+ 
+   /// Reset saved timings and calls;
+-  void reset();
++  void reset() {
++    t_start_ = TimePoint();
++    Statistic::reset();
++  }
+ 
+-  // Accessors
+-  Scalar operator()() const;
+-  Scalar mean() const;
+-  Scalar last() const;
+-  Scalar min() const;
+-  Scalar max() const;
+-  Scalar std() const;
+-  int count() const;
+-  Scalar startTime() const;
++  std::shared_ptr<Timer> nest(const std::string &nested_name) {
++    nested_timers_.emplace_back(std::make_shared<Timer>(nested_name));
++    return nested_timers_.back();
++  }
+ 
+   /// Custom stream operator for outputs.
+-  friend std::ostream& operator<<(std::ostream& os, const Timer& timer);
++  friend std::ostream &operator<<(std::ostream &os, const Timer &timer) {
++    os << timer.printNested();
++    return os;
++  }
+ 
+   /// Print timing information to console.
+-  void print() const;
++  void print() const { std::cout << *this; }
+ 
+  private:
+-  std::string name_, module_;
++  [[nodiscard]] std::string printNested(const int level = 0,
++                                        const Scalar parent_sum = 0.0) const {
++    const int name_width = 30 - 2 * level;
++    std::ostringstream ss;
++    if (this->n_ < 1) {
++      ss << std::left << std::setw(name_width) << this->name_
++         << "has no sample yet." << std::endl;
++      return ss.str();
++    }
++
++    ss.precision(3);
++
++    ss << std::left << std::setw(name_width) << this->name_;
++    ss << std::right << std::setw(8) << this->sum_ << "s  ";
++    if (parent_sum != 0.0)
++      ss << std::right << std::setw(3) << (int)(100.0 * this->sum_ / parent_sum)
++         << "% ";
++    else
++      ss << std::string(5, ' ');
++    ss << std::right << std::setw(8) << this->n_ << "  calls   "
++       << "mean|std: ";
++    ss << std::right << std::setw(8) << 1000 * this->mean() << " | ";
++    ss << std::left << std::setw(8) << 1000 * this->std() << "  [min|max:  ";
++    ss << std::right << std::setw(8) << 1000 * this->min_ << " | ";
++    ss << std::left << std::setw(8) << 1000 * this->max_ << "]"
++       << " in ms\n";
++
++    for (const std::shared_ptr<Timer> &nested : nested_timers_) {
++      for (int i = 0; i < level; ++i) ss << "| ";
++      ss << "|-" << nested->printNested(level + 1, this->sum_);
++    }
++    return ss.str();
++  }
++
+   using TimePoint = std::chrono::high_resolution_clock::time_point;
+   TimePoint t_start_;
+-
+-  // Initialize timing to impossible values.
+-  Scalar timing_mean_;
+-  Scalar timing_last_;
+-  Scalar timing_S_;
+-  Scalar timing_min_;
+-  Scalar timing_max_;
+-
+-  int n_samples_;
++  std::vector<std::shared_ptr<Timer>> nested_timers_;
+ };
+ 
++using NestedTimer = std::shared_ptr<Timer>;
++
+ /*
+- * Simple class to time scopes.
++ * Helper Timer class to time scopes from Timer constructor to destructor.
+  *
+  * This effectively instantiates a timer and calls `tic()` in its constructor
+  * and `toc()` and ` print()` in its destructor.
+  */
+ class ScopedTimer : public Timer {
+  public:
+-  ScopedTimer(const std::string name = "", const std::string module = "");
+-  ~ScopedTimer();
++  ScopedTimer(const std::string &name = "") : Timer(name) { this->tic(); }
++  ScopedTimer(const std::string &name, Logger &&logger)
++    : Timer(name), logger(&logger) {
++    this->tic();
++  }
++
++  ~ScopedTimer() {
++    this->toc();
++    if (logger != nullptr)
++      *logger << *this;
++    else
++      std::cout << *this;
++  }
++
++ private:
++  Logger *logger{nullptr};
++};
++
++class ScopedTicToc {
++ public:
++  ScopedTicToc(Timer &timer) : timer(timer) { timer.tic(); }
++  ~ScopedTicToc() { timer.toc(); }
++
++ private:
++  Timer &timer;
+ };
+ 
+ /*
+- *  * Helper Timer class to instantiate a static Timer that prints in
+- * descructor.
+- *   *
+- *    * Debugging slow code? Simply create this as a static object somewhere and
+- *     * tic-toc it. Once the program ends, the destructor of StaticTimer will
+- * print
+- *      * its stats.
+- *       */
+-class StaticTimer : public Timer {
++ * Helper Timer class to instantiate a static Timer that prints in descructor.
++ *
++ * Debugging slow code? Simply create this as a static object somewhere and
++ * tic-toc it. Once the program ends, the destructor of StaticTimer will print
++ * its stats.
++ */
++template<typename T = double> class StaticTimer : public Timer {
+  public:
+   using Timer::Timer;
+ 
+   ~StaticTimer() { this->print(); }
+ };
+ 
+-/*
+- * Simple class to tic and toc a timer within a scope.
+- *
+- * This takes a timer as argument, tics in the constructor, and tocs on
+- * destruction.
+- */
+-class ScopedTicToc {
+- public:
+-  ScopedTicToc(Timer& timer);
+-  ~ScopedTicToc();
+-
+- private:
+-  Timer& timer_;
+-};
+-
+ }  // namespace agi
+--- /dev/null
++++ b/agilib/include/agilib/utils/statistic.hpp
+@@ -0,0 +1,96 @@
++#pragma once
++
++#include <cmath>
++#include <iomanip>
++#include <iostream>
++#include <limits>
++#include <string>
++
++#include "agilib/math/types.hpp"
++
++namespace agi {
++
++class Statistic {
++ public:
++  Statistic(const std::string &name = "Statistic") : name_(name) {}
++  Statistic(const Statistic &rhs) = default;
++  Statistic &operator=(const Statistic &rhs) {
++    n_ = rhs.n_;
++    last_ = rhs.last_;
++    min_ = rhs.min_;
++    max_ = rhs.max_;
++    sum_ = rhs.sum_;
++    ssum_ = rhs.ssum_;
++    return *this;
++  }
++
++  Scalar operator<<(const Scalar in) {
++    if (!std::isfinite(in)) return std::numeric_limits<Scalar>::quiet_NaN();
++
++    ++n_;
++    sum_ += in;
++    ssum_ += in * in;
++    last_ = in;
++    min_ = std::min(in, min_);
++    max_ = std::max(in, max_);
++
++    return mean();
++  }
++
++  Scalar add(const Scalar in) { return operator<<(in); }
++
++  [[nodiscard]] Scalar operator()() const { return mean(); }
++  [[nodiscard]] operator double() const { return (double)mean(); }
++  [[nodiscard]] operator float() const { return (float)mean(); }
++  [[nodiscard]] operator int() const { return n_; }
++
++  [[nodiscard]] int count() const { return n_; }
++  [[nodiscard]] Scalar last() const { return last_; }
++  [[nodiscard]] Scalar mean() const { return sum_ / ((Scalar)n_); }
++  [[nodiscard]] Scalar std() const {
++    if (!n_) return 0.0;
++    const Scalar m = mean();
++    return std::sqrt(ssum_ / n_ - m * m);
++  }
++  [[nodiscard]] Scalar min() const { return min_; }
++  [[nodiscard]] Scalar max() const { return max_; }
++  [[nodiscard]] Scalar sum() const { return sum_; }
++
++  [[nodiscard]] const std::string &name() const { return name_; }
++
++  void reset() {
++    n_ = 0;
++    sum_ = 0.0;
++    ssum_ = 0.0;
++    last_ = 0.0;
++    min_ = std::numeric_limits<Scalar>::max();
++    max_ = std::numeric_limits<Scalar>::min();
++  }
++
++  friend std::ostream &operator<<(std::ostream &os, const Statistic &s) {
++    if (s.n_ < 1) os << s.name_ << "has no sample yet!" << std::endl;
++
++    const std::streamsize prec = os.precision();
++    os.precision(3);
++
++    os << std::left << std::setw(16) << s.name_ << "mean|std  ";
++    os << std::left << std::setw(5) << s.mean() << "|";
++    os << std::left << std::setw(5) << s.std() << "  [min|max:  ";
++    os << std::left << std::setw(5) << s.min() << "|";
++    os << std::left << std::setw(5) << s.max() << "]" << std::endl;
++
++    os.precision(prec);
++    return os;
++  }
++
++ protected:
++  const std::string name_;
++  int n_{0};
++  Scalar sum_{0.0};
++  Scalar ssum_{0.0};
++  Scalar last_{0.0};
++  Scalar min_{std::numeric_limits<Scalar>::max()};
++  Scalar max_{std::numeric_limits<Scalar>::min()};
++};
++
++}  // namespace agi
+--- a/agilib/include/agilib/simulator/model_motor.hpp
++++ b/agilib/include/agilib/simulator/model_motor.hpp
+@@ -2,6 +2,7 @@
+ 
+ #include "agilib/math/math.hpp"
+ #include "agilib/simulator/model_base.hpp"
++#include "agilib/simulator/model_motor_params.hpp"
+ 
+ namespace agi {
+ 
+@@ -9,10 +10,14 @@
+  public:
+   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+ 
+-  ModelMotor(Quadrotor quad) : ModelBase(quad) {}
++  ModelMotor(Quadrotor quad, const MotorParameters& params = MotorParameters());
+ 
+   bool run(const Ref<const Vector<QS::SIZE>>,
+            Ref<Vector<QS::SIZE>>) const override;
++
++ private:
++  MotorParameters params_;
++  const Vector<4> motor_direction_{-1, -1, 1, 1};
+ };
+ 
+ 
+--- a/agilib/src/simulator/model_motor.cpp
++++ b/agilib/src/simulator/model_motor.cpp
+@@ -2,6 +2,8 @@
+ 
+ namespace agi {
+ 
++ModelMotor::ModelMotor(Quadrotor quad, const MotorParameters& params)
++  : ModelBase(quad), params_(params) {}
+ 
+ bool ModelMotor::run(const Ref<const Vector<QS::SIZE>> state,
+                      Ref<Vector<QS::SIZE>> derivative) const {
+@@ -10,9 +12,31 @@
+     derivative.segment<QS::NMOT>(QS::MOT).setZero();
+   } else {
+     derivative.segment<QS::NMOT>(QS::MOT) =
+-      quad_.motor_tau_inv_ * (state.segment<QS::NMOTDES>(QS::MOTDES) -
+-                              state.segment<QS::NMOT>(QS::MOT));
++      (state.segment<QS::NMOTDES>(QS::MOTDES) -
++       state.segment<QS::NMOT>(QS::MOT)) /
++      params_.time_constant_;
+   }
++
++  const Vector<3> inertia_torque_{
++    0, 0,
++    (derivative.segment<QS::NMOT>(QS::MOT).array() * motor_direction_.array())
++        .sum() *
++      params_.inertia_};
++  derivative.segment<QS::NOME>(QS::OME) += quad_.J_inv_ * inertia_torque_;
++
++  const ArrayVector<4> Omega = state.segment<QS::NMOT>(QS::MOT).array();
++  const ArrayVector<4> eta = Omega.pow(3) * params_.propeller_drag_coeff_ /
++                             (Omega * params_.pwr_linear_coeff_ +
++                              Omega.pow(3) * params_.pwr_cubic_coeff_ +
++                              Omega.pow(6) * params_.pwr_sixth_coeff_ + 1e-6);
++  const ArrayVector<4> prop_torque =
++    Omega.pow(2) * params_.propeller_drag_coeff_;
++  const ArrayVector<4> p_mech = prop_torque * Omega;
++
++  const ArrayVector<4> p_elec = p_mech / (eta + 1e-6);
++  derivative(QS::E) = -p_elec.sum();
++  // printf("Eta: %.3f\tPmech: %.1f\tPelec: %.1f\tEtot: %.1f\n", eta.mean(),
++  // p_mech.sum(), p_elec.sum(), state(QS::E));
+ 
+   return true;
+ }
+--- /dev/null
++++ b/agilib/include/agilib/simulator/model_motor_params.hpp
+@@ -0,0 +1,25 @@
++#pragma once
++
++#include "agilib/base/parameter_base.hpp"
++#include "agilib/math/types.hpp"
++#include "agilib/utils/logger.hpp"
++
++namespace agi {
++
++struct MotorParameters : public ParameterBase {
++  MotorParameters();
++
++  using ParameterBase::load;
++  bool load(const Yaml& node) override;
++
++  bool valid() const override;
++
++  Scalar time_constant_ = NAN;  // time constant of the motor+propeller
++  Scalar inertia_ = NAN;        // inertia of motor+propeller
++  Scalar propeller_drag_coeff_ = NAN;
++  Scalar pwr_linear_coeff_ = NAN;
++  Scalar pwr_cubic_coeff_ = NAN;
++  Scalar pwr_sixth_coeff_ = NAN;
++};
++
++}  // namespace agi
+--- /dev/null
++++ b/agilib/src/simulator/model_motor_params.cpp
+@@ -0,0 +1,38 @@
++#include "agilib/simulator/model_motor_params.hpp"
++
++namespace agi {
++
++MotorParameters::MotorParameters()
++  : time_constant_(0.033),
++    inertia_(5.64e-6),
++    propeller_drag_coeff_(1.825e-08),
++    pwr_linear_coeff_(6.088e-03),
++    pwr_cubic_coeff_(1.875e-08),
++    pwr_sixth_coeff_(7.700e-20) {}
++
++
++bool MotorParameters::load(const Yaml& node) {
++  if (node.isNull()) return false;
++
++  time_constant_ = node["time_constant"].as<Scalar>();
++  inertia_ = node["inertia"].as<Scalar>();
++  pwr_linear_coeff_ = node["pwr_coeff_linear"].as<Scalar>();
++  pwr_cubic_coeff_ = node["pwr_coeff_cubic"].as<Scalar>();
++  pwr_sixth_coeff_ = node["pwr_coeff_sixth"].as<Scalar>();
++  propeller_drag_coeff_ = node["pwr_coeff_drag"].as<Scalar>();
++
++  return valid();
++}
++
++bool MotorParameters::valid() const {
++  bool check = true;
++  check &= time_constant_ > 0;
++  check &= inertia_ > 0;
++  check &= propeller_drag_coeff_ > 0;
++  check &= pwr_linear_coeff_ >= 0;
++  check &= pwr_cubic_coeff_ > 0;
++  check &= pwr_sixth_coeff_ >= 0;
++  return check;
++}
++
++}  // namespace agi
+--- a/agilib/src/simulator/model_lin_cub_drag.cpp
++++ b/agilib/src/simulator/model_lin_cub_drag.cpp
+@@ -14,7 +14,7 @@
+ 
+   const Ref<const Vector<3>> vel = state.segment<QS::NVEL>(QS::VEL);
+ 
+-  const Vector<3> velocity_body = R.transpose() * vel;
++  const Vector<3> velocity_body = R.transpose() * (vel - windspeed_);
+ 
+   Vector<3> force = -velocity_body.array() * params_.lin_drag_coeff_.array() -
+                     velocity_body.array() * velocity_body.array() *
+--- a/agilib/src/simulator/model_body_drag.cpp
++++ b/agilib/src/simulator/model_body_drag.cpp
+@@ -12,7 +12,7 @@
+                            .toRotationMatrix();
+ 
+   const Vector<3> velocity_body =
+-    R.transpose() * state.segment<QS::NVEL>(QS::VEL);
++    R.transpose() * (state.segment<QS::NVEL>(QS::VEL) - windspeed_);
+   const Vector<3> coeff{0.5 * params_.cxy_ * params_.rho_ * params_.ax_,
+                         0.5 * params_.cxy_ * params_.rho_ * params_.ay_,
+                         0.5 * params_.cz_ * params_.rho_ * params_.az_};
+--- /dev/null
++++ b/agilib/include/agilib/simulator/model_battery.hpp
+@@ -0,0 +1,23 @@
++#pragma once
++
++#include "agilib/math/math.hpp"
++#include "agilib/simulator/model_base.hpp"
++#include "agilib/simulator/model_battery_params.hpp"
++
++namespace agi {
++
++class ModelBattery : public ModelBase {
++ public:
++  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
++
++  ModelBattery(Quadrotor quad,
++               const BatteryParameters& params = BatteryParameters());
++
++  bool run(const Ref<const Vector<QS::SIZE>>,
++           Ref<Vector<QS::SIZE>>) const override;
++
++ private:
++  BatteryParameters params_;
++};
++
++}  // namespace agi
+--- /dev/null
++++ b/agilib/src/simulator/model_battery.cpp
+@@ -0,0 +1,50 @@
++#include "agilib/simulator/model_battery.hpp"
++
++#include <iostream>
++
++#include "agilib/math/types.hpp"
++
++namespace agi {
++
++ModelBattery::ModelBattery(Quadrotor quad, const BatteryParameters& params)
++  : ModelBase(quad), params_(params) {}
++
++
++bool ModelBattery::run(const Ref<const Vector<QS::SIZE>> state,
++                       Ref<Vector<QS::SIZE>> derivative) const {
++  // consumed energy in kJ and instataneous power consumption in W
++  const Scalar E = -state(QS::E) / 1e3 / params_.cell_series_ /
++                   params_.cell_parallel_ / params_.cell_capacity_;
++  const Scalar P = -derivative(QS::E) / params_.cell_series_ /
++                   params_.cell_parallel_ / params_.cell_capacity_;
++
++  const Scalar internal_resistance = params_.r_min_;
++
++  const Scalar U_battery = params_.energy_coefficients_lin_ * E +
++                           params_.energy_coefficients_square_ * E * E +
++                           params_.energy_coefficients_cube_ * E * E * E;
++  const Scalar U_capacity = state(QS::UCAP);
++
++  // voltage_ = U_battery - U_capacity - U_resistor;
++  // This term is not available in real life, since we don't know the
++  // current without knowing the voltage. Can be solved for, see below
++  const Scalar tmp = U_battery - U_capacity;
++  Scalar voltage =
++    params_.u_0_ + 0.5 * (tmp - params_.u_0_ +
++                          sqrt(-4 * internal_resistance * P +
++                               (tmp + params_.u_0_) * (tmp + params_.u_0_)));
++  voltage *= params_.cell_series_;
++
++  // Set up the derivative for the long time constant
++  derivative(QS::UCAP) =
++    (params_.power_coefficient_ * P - U_capacity) / params_.time_constant_;
++
++  // Simulate the battery voltage as a first-order system with 5ms time constant
++  // this is just a way to be able to include it in the state
++  derivative(QS::UBAT) = (voltage - state(QS::UBAT)) / params_.tc_short_;
++
++  return true;
++}
++
++
++}  // namespace agi
+--- /dev/null
++++ b/agilib/include/agilib/simulator/model_battery_params.hpp
+@@ -0,0 +1,36 @@
++#pragma once
++
++#include "agilib/base/parameter_base.hpp"
++#include "agilib/math/types.hpp"
++#include "agilib/utils/logger.hpp"
++
++namespace agi {
++
++struct BatteryParameters : public ParameterBase {
++  BatteryParameters();
++
++  using ParameterBase::load;
++  bool load(const Yaml& node) override;
++
++  bool valid() const override;
++
++  Scalar cell_series_ = NAN;    // number of cells in series
++  Scalar cell_parallel_ = NAN;  // number of cells in parallel
++  Scalar cell_capacity_ = NAN;  // capacity of a single cell
++  Scalar u_0_ = NAN;            // cell voltage at 100 charge
++  Scalar time_constant_ = NAN;  // time constant of RC circuit
++  Scalar tc_short_ = NAN;       // time constant of battery voltage itself
++
++  // Those coefficients come from the work
++  // "Range, Endurance and Optimal Speed Estimates for multicopters"
++  Scalar power_coefficient_ = NAN;
++  Scalar energy_coefficients_lin_ = NAN;
++  Scalar energy_coefficients_square_ = NAN;
++  Scalar energy_coefficients_cube_ = NAN;
++
++  Scalar r_coeff_power_ = NAN;
++  Scalar r_coeff_capacity_ = NAN;
++  Scalar r_min_ = NAN;
++};
++
++}  // namespace agi
+--- /dev/null
++++ b/agilib/src/simulator/model_battery_params.cpp
+@@ -0,0 +1,56 @@
++#include "agilib/simulator/model_battery_params.hpp"
++
++namespace agi {
++
++BatteryParameters::BatteryParameters()
++  : cell_series_(4),
++    cell_parallel_(1),
++    cell_capacity_(1.8),
++    u_0_(4.12),
++    time_constant_(3.3),
++    tc_short_(0.005),
++    power_coefficient_(0.001048461870588),
++    energy_coefficients_lin_(-0.110217859867365),
++    energy_coefficients_square_(0.010336802983888),
++    energy_coefficients_cube_(-4.377763980885748e-04),
++    r_coeff_power_(-7.7608e-05),
++    r_coeff_capacity_(0.0069498),
++    r_min_(11e-3) {}
++
++
++bool BatteryParameters::load(const Yaml& node) {
++  if (node.isNull()) return false;
++
++  cell_series_ = node["cell_series"].as<Scalar>();
++  cell_parallel_ = node["cell_parallel"].as<Scalar>();
++  cell_capacity_ = node["cell_capacity"].as<Scalar>();
++  u_0_ = node["u_0"].as<Scalar>();
++  time_constant_ = node["time_constant"].as<Scalar>();
++  tc_short_ = node["time_constant_short"].as<Scalar>();
++  power_coefficient_ = node["power_coefficient"].as<Scalar>();
++  energy_coefficients_lin_ = node["energy_coefficients_lin"].as<Scalar>();
++  energy_coefficients_square_ = node["energy_coefficients_square"].as<Scalar>();
++  energy_coefficients_cube_ = node["energy_coefficients_cube"].as<Scalar>();
++  r_coeff_power_ = node["r_coeff_power"].as<Scalar>();
++  r_coeff_capacity_ = node["r_coeff_capacity"].as<Scalar>();
++  r_min_ = node["r_min"].as<Scalar>();
++
++  return valid();
++}
++
++bool BatteryParameters::valid() const {
++  bool check = true;
++  check &= cell_series_ > 0;
++  check &= cell_parallel_ > 0;
++  check &= cell_capacity_ > 0;
++  check &= u_0_ > 0;
++  check &= time_constant_ > 0;
++  check &= tc_short_ > 0;
++  check &= power_coefficient_ > 0;
++  check &= energy_coefficients_lin_ > 0;
++  check &= energy_coefficients_square_ > 0;
++  check &= energy_coefficients_cube_ > 0;
++  return check;
++}
++
++}  // namespace agi
+--- a/agilib/include/agilib/utils/low_pass_filter.hpp
++++ b/agilib/include/agilib/utils/low_pass_filter.hpp
+@@ -23,6 +23,15 @@
+   ~LowPassFilter() = default;
+ 
+   Vector<rows> add(const Vector<rows>& sample);
++
++  void reset(const Scalar initial_value) {
++    reset(Vector<rows>::Constant(initial_value));
++  };
++
++  void reset(const Vector<rows>& initial_value) {
++    input_ = initial_value.replicate(1, 2);
++    output_ = initial_value.replicate(1, 2);
++  };
+ 
+   Vector<rows> operator()() const { return output_.col(0); }
+   Scalar operator()(const int i) const { return output_(i, 0); }
+@@ -89,6 +98,7 @@
+     input_(initial_value.replicate(1, 2)),
+     output_(initial_value.replicate(1, 2)) {}
+ 
++
+ template<int rows>
+ Vector<rows> LowPassFilter<rows>::add(const Vector<rows>& sample) {
+   const ArrayVector<rows> x2 = input_.col(1);
+--- a/agilib/include/agilib/simulator/low_level_controller_betaflight.hpp
++++ b/agilib/include/agilib/simulator/low_level_controller_betaflight.hpp
+@@ -21,6 +21,7 @@
+   bool setState(const QuadState& state) override;
+   void run() override;
+   bool updateQuad(const Quadrotor& quad) override;
++  ArrayVector<3> getIPart() const { return error_integral_; }
+ 
+  private:
+   // Quadrotor properties: allocation in BFL style
+@@ -32,8 +33,6 @@
+     (Matrix<4, 4>() << 1, -1, -1, -1, 1, 1, 1, -1, 1, -1, 1, 1, 1, 1, -1, 1)
+       .finished();
+ 
+-  // Battery Voltage: fixed for now, add voltage model in the future
+-  Scalar voltage_ = 15.0;
+ 
+   std::shared_ptr<LowPassFilter<3>> gyro_lpf_;
+   std::shared_ptr<LowPassFilter<3>> dterm_lpf_;
+--- a/agilib/src/simulator/low_level_controller_betaflight.cpp
++++ b/agilib/src/simulator/low_level_controller_betaflight.cpp
+@@ -60,10 +60,17 @@
+     return;
+   }
+ 
++  const Scalar voltage = state_.x(QS::UBAT);
++  error_integral_ = state_.x.segment<QS::NBLFI>(QS::BFLI);
++
+   const Scalar sbus =
+-    params_.tmap_.map(cmd_.collective_thrust * quad_.m_, voltage_);
++    params_.tmap_.map(cmd_.collective_thrust * quad_.m_, voltage);
++  const Scalar relative_throttle =
++    (sbus - params_.SBUS_MIN_VAL) / params_.SBUS_VAL_RANGE;
+   const Scalar throttle =
+-    (sbus - params_.SBUS_MIN_VAL) / params_.SBUS_VAL_RANGE;
++    std::clamp((relative_throttle - params_.bfl_dshot_offset_) /
++                 (1.0 - params_.bfl_dshot_offset_),
++               0.0, 1.0);
+ 
+   // PID Controller
+   const ArrayVector<3> omega_des = cmd_.omega;
+@@ -86,9 +93,9 @@
+ 
+   for (int i = 0; i < 4; ++i) {
+     motor_omega_des_(i) =
+-      params_.omega_offset + params_.omega_volt * voltage_ +
+-      params_.omega_cmd_lin * motor_dshot_command(i) +
+-      params_.omega_cmd_sqrt * std::sqrt(motor_dshot_command(i));
++      params_.omega_offset_ + params_.omega_volt_ * voltage +
++      params_.omega_cmd_lin_ * motor_dshot_command(i) +
++      params_.omega_cmd_sqrt_ * std::sqrt(motor_dshot_command(i));
+   }
+   motor_omega_des_ = motor_omega_des_.cwiseMax(quad_.motor_omega_min_)
+                        .cwiseMin(quad_.motor_omega_max_);
+--- a/agilib/include/agilib/simulator/low_level_controller_betaflight_params.hpp
++++ b/agilib/include/agilib/simulator/low_level_controller_betaflight_params.hpp
+@@ -61,14 +61,15 @@
+   // Identified via "BetaflightID_v2.m" (ask Leonard if you want to know more)
+   // No reason behind this, it is what it is!
+   static constexpr Scalar p_gain_scaling = 1.818e-3;
+-  static constexpr Scalar i_gain_scaling = 16.67e-6;
++  static constexpr Scalar i_gain_scaling = 12.5e-3;
+   static constexpr Scalar d_gain_scaling = -31.25e-6;
+-  static constexpr Scalar i_gain_limit = 0.1;
++  static constexpr Scalar i_gain_limit = 0.5;
+ 
+-  static constexpr Scalar omega_cmd_sqrt = 79.79;
+-  static constexpr Scalar omega_cmd_lin = 0.04071;
+-  static constexpr Scalar omega_volt = 61.31;
+-  static constexpr Scalar omega_offset = -1933.2;
++  // loaded from betaflight yaml
++  Scalar omega_cmd_sqrt_ = 62.079;
++  Scalar omega_cmd_lin_ = 0.25268;
++  Scalar omega_volt_ = 73.082;
++  Scalar omega_offset_ = -1784;
+ 
+   Logger logger_{"BetaFlightParams"};
+ };
+--- a/agilib/src/simulator/low_level_controller_betaflight_params.cpp
++++ b/agilib/src/simulator/low_level_controller_betaflight_params.cpp
+@@ -7,7 +7,7 @@
+ Vector<4> LowLevelControllerBetaflightParams::getDSHOT(const Vector<4>& thr) {
+   const Scalar min_throttle = (bfl_min_throttle_ - PWM_MIN_VAL) / PWM_RANGE;
+   const Scalar max_throttle = (bfl_max_throttle_ - PWM_MIN_VAL) / PWM_RANGE;
+-  const Scalar dshot_offset = bfl_dshot_offset_ * DSHOT_RANGE + DSHOT_MIN_VAL;
++  const Scalar dshot_offset = bfl_dshot_offset_ * DSHOT_RANGE;
+   const Scalar dshot_slope = DSHOT_MAX_VAL - dshot_offset;
+ 
+   const ArrayVector<4> throttle =
+@@ -32,6 +32,11 @@
+ 
+   tmap_file_ = node["thrust_map"].as<std::string>();
+ 
++  omega_cmd_sqrt_ = node["Omega"]["omega_cmd_sqrt"].as<Scalar>();
++  omega_cmd_lin_ = node["Omega"]["omega_cmd_lin"].as<Scalar>();
++  omega_volt_ = node["Omega"]["omega_volt"].as<Scalar>();
++  omega_offset_ = node["Omega"]["omega_offset"].as<Scalar>();
++
+   return valid();
+ }
+ 
+@@ -55,8 +60,13 @@
+   check &= bfl_min_throttle_ < bfl_max_throttle_;
+   check &= bfl_dshot_offset_ >= 0;
+   check &= bfl_dshot_offset_ <= 1;
+-  check &= freq_lpf_dterm > 0;
+-  check &= freq_lpf_gyro_ > 0;
++  check &= freq_lpf_dterm > 0; // TODO: check if -1 is allowed
++  check &= freq_lpf_gyro_ > 0;  // TODO: check if -1 is allowed
++
++  check &= omega_cmd_sqrt_ > 0;
++  check &= omega_cmd_lin_ > 0;
++  check &= omega_volt_ > 0;
++  check &= omega_offset_ < 0;
+ 
+   return check;
+ }
+--- a/agilib/include/agilib/simulator/quadrotor_simulator.hpp
++++ b/agilib/include/agilib/simulator/quadrotor_simulator.hpp
+@@ -3,6 +3,7 @@
+ // std
+ #include <memory>
+ #include <queue>
++#include <random>
+ #include <type_traits>
+ 
+ // agilib
+@@ -21,6 +22,7 @@
+ #include "agilib/types/command.hpp"
+ #include "agilib/types/quad_state.hpp"
+ #include "agilib/types/quadrotor.hpp"
++#include "agilib/utils/fir_filter.hpp"
+ 
+ namespace agi {
+ 
+@@ -40,13 +42,23 @@
+ 
+   // public get functions
+   bool getState(QuadState *const state) const override;
++  ArrayVector<6> getIMUMeasurement() const;
+   bool getQuadrotor(Quadrotor *const quad) const;
+   const Quadrotor &getQuadrotor() const;
+   const std::shared_ptr<LowLevelControllerBase> getLowLevelController() const;
++  bool getQuadConfigFile(fs::path *const quad_cfg_file) const;
+ 
+   // public set functions
++  bool setTime(const Scalar &time);
+   bool setState(const QuadState &state) override;
+   bool setCommand(const Command &cmd);
++  bool setExternalWrench(const Ref<const Vector<6>> &wrench,
++                         bool force_in_bf = false, bool torque_in_bf = true);
++  bool setExternalForce(const Ref<const Vector<3>> &force,
++                        bool force_in_bf = false);
++  bool setExternalTorque(const Ref<const Vector<3>> &torque,
++                         bool torque_in_bf = true);
++  bool setWindspeed(const Vector<3> &windspeed);
+   bool updateQuad(const Quadrotor &quad);
+   void clearModelPipeline() { model_pipeline_.clear(); }
+ 
+@@ -68,6 +80,12 @@
+   std::vector<std::shared_ptr<ModelBase>> model_pipeline_;
+   std::shared_ptr<IntegratorBase> integrator_ptr_;
+ 
++  std::shared_ptr<FIRFilter<6>> filter_ptr_;
++  ArrayVector<6> imu_;
++  std::random_device r_;
++  std::default_random_engine gen_;
++  std::normal_distribution<Scalar> n_dist_;
++
+ 
+   // control command
+   std::queue<Command> cmd_queue_;
+--- a/agilib/src/simulator/quadrotor_simulator.cpp
++++ b/agilib/src/simulator/quadrotor_simulator.cpp
+@@ -1,6 +1,7 @@
+ #include "agilib/simulator/quadrotor_simulator.hpp"
+ 
+ #include "agilib/math/gravity.hpp"
++#include "agilib/simulator/low_level_controller_betaflight.hpp"
+ 
+ namespace agi {
+ 
+@@ -8,11 +9,23 @@
+   : QuadrotorSimulator(SimulatorParams(quadrotor)) {}
+ 
+ QuadrotorSimulator::QuadrotorSimulator(const SimulatorParams &params)
+-  : SimulatorBase("Quadrotor Simulator"), params_(params) {
++  : SimulatorBase("Quadrotor Simulator"), params_(params), gen_(r_()) {
+   params_.createLowLevelController(ctrl_);
+   params_.createModelPipeline(model_pipeline_);
+   params_.createIntegrator(integrator_ptr_, this->getDynamics());
+ 
++  if (params_.enable_imu_) {
++    filter_ptr_ = std::make_shared<FIRFilter<6>>();
++    filter_ptr_->load(Yaml(params_.imu_file_));
++
++    for (int i = 0; i < filter_ptr_->init_samples(); ++i) {
++      filter_ptr_
++        ->add(
++          ArrayVector<6>::NullaryExpr(6, [&](int) { return n_dist_(gen_); }))
++        .transpose();
++    }
++  }
++
+   reset();
+ }
+ 
+@@ -21,14 +34,27 @@
+   return run(ctl_dt);
+ }
+ 
++bool QuadrotorSimulator::setTime(const Scalar &time) {
++  if (!std::isfinite(time)) return false;
++
++  state_.t = time;
++  return true;
++}
++
+ bool QuadrotorSimulator::run(const Scalar ctl_dt) {
+-  if (!state_.valid()) return false;
++  if (!state_.valid()) {
++    logger_.error("State is not valid.");
++    return false;
++  }
+ 
+   QuadState next_state = state_;
+   const Scalar max_dt = integrator_ptr_->dtMax();
+   Scalar remain_ctl_dt = ctl_dt;
+ 
+   // simulation loop
++  imu_.setZero();
++  int counter = 0;
++
+   while (remain_ctl_dt > 0.0) {
+     const Scalar sim_dt = std::min(remain_ctl_dt, max_dt);
+     // check if we need to update the reference command for the controller
+@@ -43,12 +69,25 @@
+     ctrl_->setState(state_);
+     ctrl_->getMotorCommand(state_.motdes);
+ 
++    std::shared_ptr<LowLevelControllerBetaflight> bfl_pointer =
++      std::dynamic_pointer_cast<LowLevelControllerBetaflight>(ctrl_);
++    if (bfl_pointer) {
++      // we only enter here if the cast was successful
++      state_.x.segment<QS::NBLFI>(QS::BFLI) = bfl_pointer->getIPart();
++    }
++
+     if (!std::isfinite(params_.quadrotor_.motor_tau_inv_)) {
+       state_.mot = state_.motdes;
+     }
+ 
+     integrator_ptr_->step(state_.x, sim_dt, next_state.x);
+     updateState(next_state, sim_dt);
++
++    if (params_.enable_imu_) {
++      imu_ += filter_ptr_->add(
++        ArrayVector<6>::NullaryExpr(6, [&](int) { return n_dist_(gen_); }));
++      counter += 1;
++    }
+ 
+     if (state_.p.z() <= 0.0) {
+       state_.p.z() = 0.0;
+@@ -59,11 +98,26 @@
+     remain_ctl_dt -= sim_dt;
+   }
+ 
++  if (params_.enable_imu_) {
++    imu_ /= std::sqrt((Scalar)counter);
++
++    imu_ *= (GVEC + state_.a)
++              .norm();  // Weird, but this is how the coeffs are done, even for
++                        // gyro, ask Leoanrd if you thinks it's a stupid idea
++    ArrayVector<6> imu_clean;
++    imu_clean.segment<3>(0) = state_.a;
++    imu_clean.segment<3>(3) = state_.w;
++    imu_ += imu_clean;
++  }
++
+   state_.qx.normalize();
+ 
+   state_.t += ctl_dt;
+   return true;
+ }
++
++
++ArrayVector<6> QuadrotorSimulator::getIMUMeasurement() const { return imu_; }
+ 
+ bool QuadrotorSimulator::reset(const bool &reset_time) {
+   state_.setZero(reset_time);
+@@ -96,6 +150,47 @@
+   state_.a = delta_vel / sim_dt;
+ }
+ 
++bool QuadrotorSimulator::setExternalWrench(const Ref<const Vector<6>> &wrench,
++                                           bool force_in_bf,
++                                           bool torque_in_bf) {
++  if (params_.external_wrench_ptr_)
++    return params_.external_wrench_ptr_->setExternalWrench(wrench, force_in_bf,
++                                                           torque_in_bf);
++  else
++    return false;
++}
++
++bool QuadrotorSimulator::setExternalForce(const Ref<const Vector<3>> &force,
++                                          bool force_in_bf) {
++  if (params_.external_wrench_ptr_)
++    return params_.external_wrench_ptr_->setExternalForce(force, force_in_bf);
++  else
++    return false;
++}
++
++bool QuadrotorSimulator::setExternalTorque(const Ref<const Vector<3>> &torque,
++                                           bool torque_in_bf) {
++  if (params_.external_wrench_ptr_)
++    return params_.external_wrench_ptr_->setExternalTorque(torque,
++                                                           torque_in_bf);
++  else
++    return false;
++}
++
++bool QuadrotorSimulator::setWindspeed(const Vector<3> &windspeed) {
++  if (params_.models_with_windspeed_.empty()) {
++    logger_.error("No models with windspeed support available.");
++    return false;
++  } else {
++    for (auto &m : params_.models_with_windspeed_) {
++      if (!m->setWindspeed(windspeed)) {
++        return false;
++      }
++    }
++    return true;
++  }
++}
++
+ bool QuadrotorSimulator::setCommand(const Command &cmd) {
+   cmd_queue_.push(cmd);
+   return true;
+@@ -116,6 +211,12 @@
+ bool QuadrotorSimulator::getQuadrotor(Quadrotor *const quad) const {
+   if (quad == nullptr || !params_.quadrotor_.valid()) return false;
+   *quad = params_.quadrotor_;
++  return true;
++}
++
++bool QuadrotorSimulator::getQuadConfigFile(
++  fs::path *const quad_cfg_file) const {
++  *quad_cfg_file = params_.quad_file_;
+   return true;
+ }
+ 
+--- /dev/null
++++ b/agilib/include/agilib/utils/fir_filter.hpp
+@@ -0,0 +1,91 @@
++#pragma once
++
++#include "agilib/math/types.hpp"
++#include "agilib/utils/yaml.hpp"
++
++namespace agi {
++
++template<int channels>
++class FIRFilter {
++  // Implements a general digital filter with numerator coefficients a and
++  // denominator coefficients b. The filter coefficients are give in matlab
++  // order, i.e. Y(z) = (b(1) + b(2)z^-1 + ...)/(1 + a(2)*z^-1 + ...)
++  // or
++  // a(1)y(n)=b(1)x(n)+b(2)x(n−1)+...+b(n_b +1)x(n−n_b)
++  //   −a(2)y(n−1)−...−a(n a +1)y(n−n a).
++  // In the implementation all coefficients are normalized w.r.t a(1)
++
++ public:
++  bool load(const Yaml& node) {
++    const int na = node["na"].as<int>();
++    a_.resize(na, channels);
++    node["a"].getIfDefined(a_);
++
++    const int nb = node["nb"].as<int>();
++    b_.resize(nb, channels);
++    node["b"].getIfDefined(b_);
++
++    na_ = a_.rows();
++    nb_ = b_.rows();
++
++    x_.conservativeResize(nb_, channels);
++    y_.conservativeResize(na_, channels);
++
++    b_.rowwise() /= a_.row(0);
++    a_.rowwise() /= a_.row(0);
++    a_.row(0).setZero();
++
++    x_.setZero();
++    y_.setZero();
++    return true;
++  }
++
++  ArrayVector<channels> add(const ArrayVector<channels>& sample) {
++    // y(n)=b(1)x(n)+b(2)x(n−1)+...+b(n_b +1)x(n−n_b)
++    // −a(2)y(n−1)−...−a(n a +1)y(n−n a).
++    idx_y_ = ((idx_y_ - 1) % na_ + na_) % na_;
++    idx_x_ = ((idx_x_ - 1) % nb_ + nb_) % nb_;
++
++    x_.row(idx_x_) = sample;
++    ArrayVector<channels> numerator =
++      (x_.bottomRows(nb_ - idx_x_) * b_.topRows(nb_ - idx_x_)).colwise().sum();
++    if (idx_x_ > 0) {
++      numerator += (x_.topRows(idx_x_) * b_.bottomRows(idx_x_)).colwise().sum();
++    }
++
++    ArrayVector<channels> denominator =
++      (y_.bottomRows(na_ - idx_y_) * a_.topRows(na_ - idx_y_)).colwise().sum();
++    if (idx_y_ > 0) {
++      denominator +=
++        (y_.topRows(idx_y_) * a_.bottomRows(idx_y_)).colwise().sum();
++    }
++    y_.row(idx_y_) = numerator - denominator;
++    return y_.row(idx_y_);
++  }
++
++
++  ArrayVector<channels> operator()() const { return y_.col(idx_y_); }
++  Scalar operator()(const int i) const { return y_(idx_y_, i); }
++
++  bool valid() const {
++    return b_.allFinite() && a_.allFinite() && x_.allFinite() && y_.allFinite();
++  };
++
++  int init_samples() const { return std::max(na_, nb_); }
++
++ private:
++  Array<Dynamic, channels> b_;
++  Array<Dynamic, channels> a_;
++
++  Array<Dynamic, channels> x_;
++  Array<Dynamic, channels> y_;
++
++  int idx_y_ = 0;
++  int idx_x_ = 0;
++
++  int na_ = 0;
++  int nb_ = 0;
++};
++
++
++}  // namespace agi

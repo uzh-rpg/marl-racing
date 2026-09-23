@@ -1,0 +1,13 @@
+cell_series : 4
+cell_parallel : 1
+cell_capacity : 0.85
+u_0 : 4.12
+time_constant : 3.3  
+time_constant_short : 0.005
+power_coefficient : 0.001048461870588
+energy_coefficients_lin : -0.110217859867365 
+energy_coefficients_square: 0.010336802983888
+energy_coefficients_cube: -4.377763980885748e-04
+r_coeff_power : -7.7608e-05
+r_coeff_capacity : 0.0069498
+r_min : 11e-3

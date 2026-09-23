@@ -1,0 +1,6 @@
+.deps/
+.venv/
+build/
+runs/
+__pycache__/
+*.pyc

@@ -1,0 +1,8 @@
+# Parameters can be identified using new thrust mapping scripts
+# To give the motor perfect efficiency, set linear and sixth to 0 and drag = cubic
+time_constant : 0.0245
+inertia : 2.653760e-07
+pwr_coeff_drag: 1.648230e-09
+pwr_coeff_linear: 2.797876e-03
+pwr_coeff_cubic: 1.648230e-09
+pwr_coeff_sixth: 3.183752e-21
